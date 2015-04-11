@@ -1,12 +1,10 @@
-minetest.register_privilege("delprotect","Ignore other players protection")
+minetest.register_privilege("delprotect","Ignore player protection")
 
 protector = {}
-protector.radius = 5
+protector.radius = (tonumber(minetest.setting_get("protector_radius")) or 5)
 
 protector.get_member_list = function(meta)
-	local s = meta:get_string("members")
-	local list = s:split(" ")
-	return list
+	return meta:get_string("members"):split(" ")
 end
 
 protector.set_member_list = function(meta, list)
@@ -14,8 +12,7 @@ protector.set_member_list = function(meta, list)
 end
 
 protector.is_member = function (meta, name)
-	local list = protector.get_member_list(meta)
-	for _, n in ipairs(list) do
+	for _, n in ipairs(protector.get_member_list(meta)) do
 		if n == name then
 			return true
 		end
@@ -44,18 +41,17 @@ end
 -- Protector Interface
 
 protector.generate_formspec = function(meta)
-	if meta:get_int("page") == nil then meta:set_int("page",0) end
-	local formspec = "size[8,7]"
-		.."label[0,0;-- Protector interface --]"
-		.."label[0,1;Punch node to show protected area]"
-		.."label[0,2;Members: (type nick, press Enter to add)]"
+
+	local formspec = "size[8,7]"..default.gui_bg..default.gui_bg_img..default.gui_slots
+		.."label[2.5,0;-- Protector interface --]"
+		.."label[0,1;PUNCH node to show protected area or USE for area check]"
+		.."label[0,2;Members: (type player name then press Enter to add)]"
+
 	local members = protector.get_member_list(meta)
-	
-	local npp = 12 -- was 15, names per page
-	local s = 0
+	local npp = 12
 	local i = 0
+
 	for _, member in ipairs(members) do
-		if s < meta:get_int("page")*15 then s = s +1 else
 			if i < npp then
 				formspec = formspec .. "button["..(i%4*2)..","
 				..math.floor(i/4+3)..";1.5,.5;protector_member;"..member.."]"
@@ -63,14 +59,15 @@ protector.generate_formspec = function(meta)
 				..math.floor(i/4+3)..";.75,.5;protector_del_member_"..member..";X]"
 			end
 			i = i +1
-		end
 	end
-	local add_i = i
-	if add_i < npp then
+	
+	if i < npp then
 		formspec = formspec
-		.."field["..(add_i%4*2+1/3)..","..(math.floor(add_i/4+3)+1/3)..";1.433,.5;protector_add_member;;]"
+		.."field["..(i%4*2+1/3)..","..(math.floor(i/4+3)+1/3)..";1.433,.5;protector_add_member;;]"
 	end
-	               		formspec = formspec.."button_exit[1,6.2;2,0.5;close_me;<< Back]"
+
+	formspec = formspec.."button_exit[2.5,6.2;3,0.5;close_me;Close]"
+
 	return formspec
 end
 
@@ -88,11 +85,9 @@ protector.can_dig = function(r,pos,digger,onlyowner,infolevel)
 		return false
 	end
 
-	local whois = digger
-
 	-- Delprotect privileged users can override protections
 
-	if minetest.check_player_privs(whois, {delprotect=true}) and infolevel == 1 then
+	if minetest.check_player_privs(digger, {delprotect=true}) and infolevel == 1 then
 		return true
 	end
 
@@ -105,37 +100,43 @@ protector.can_dig = function(r,pos,digger,onlyowner,infolevel)
 		{x=pos.x+r, y=pos.y+r, z=pos.z+r},
 		{"protector:protect", "protector:protect2"})
 
-	for _, pos in ipairs(positions) do
-		local meta = minetest.env:get_meta(pos)
+	if #positions > 0 then
+		local meta = minetest.get_meta(positions[1])
 		local owner = meta:get_string("owner")
+		local members = meta:get_string("members")
 
-		if owner ~= whois then 
-			if onlyowner or not protector.is_member(meta, whois) then
+		if owner ~= digger then 
+			if onlyowner or not protector.is_member(meta, digger) then
 				if infolevel == 1 then
-					minetest.chat_send_player(whois, "This area is owned by "..owner.." !")
+					minetest.chat_send_player(digger,"This area is owned by "..owner.." !")
 				elseif infolevel == 2 then
-					minetest.chat_send_player(whois,"This area is owned by "..meta:get_string("owner")..".")
-					if meta:get_string("members") ~= "" then
-						minetest.chat_send_player(whois,"Members: "..meta:get_string("members")..".")
+					minetest.chat_send_player(digger,"This area is owned by "..owner..".")
+					minetest.chat_send_player(digger,"Protection located at: "..minetest.pos_to_string(positions[1]))
+					if members ~= "" then
+						minetest.chat_send_player(digger,"Members: "..members..".")
 					end
 				end
 				return false
 			end
 		end
+
+		if infolevel == 2 then
+			minetest.chat_send_player(digger,"This area is owned by "..owner..".")
+			minetest.chat_send_player(digger,"Protection located at: "..minetest.pos_to_string(positions[1]))
+			if members ~= "" then
+				minetest.chat_send_player(digger,"Members: "..members..".")
+			end
+		end
+
 	end
 
 	if infolevel == 2 then
 		if #positions < 1 then
-			minetest.chat_send_player(whois,"This area is not protected.")
-		else
-			local meta = minetest.env:get_meta(positions[1])
-			minetest.chat_send_player(whois,"This area is owned by "..meta:get_string("owner")..".")
-			if meta:get_string("members") ~= "" then
-				minetest.chat_send_player(whois,"Members: "..meta:get_string("members")..".")
-			end
+			minetest.chat_send_player(digger,"This area is not protected.")
 		end
-		minetest.chat_send_player(whois,"You can build here.")
+		minetest.chat_send_player(digger,"You can build here.")
 	end
+
 	return true
 end
 
@@ -160,7 +161,7 @@ function minetest.item_place(itemstack, placer, pointed_thing)
 		local pos = pointed_thing.above
 		local user = placer:get_player_name()
 		if not protector.can_dig(protector.radius * 2, pos, user, true, 3) then
-			minetest.chat_send_player(placer:get_player_name(),"Overlaps into another protected area")
+			minetest.chat_send_player(user, "Overlaps into another protected area")
 			return protector.old_node_place(itemstack, placer, pos)
 		end
 	end
@@ -174,7 +175,7 @@ end
 
 minetest.register_node("protector:protect", {
 	description = "Protection Block",
-	tiles = {"protector_top.png","protector_top.png","protector_side.png"},
+	tiles = {"moreblocks_circle_stone_bricks.png","moreblocks_circle_stone_bricks.png","moreblocks_circle_stone_bricks.png^protector_logo.png"},
 	sounds = default.node_sound_stone_defaults(),
 	groups = {dig_immediate=2},
 	drawtype = "nodebox",
@@ -187,27 +188,22 @@ minetest.register_node("protector:protect", {
 	light_source = 2,
 
 	after_place_node = function(pos, placer)
-		local meta = minetest.env:get_meta(pos)
+		local meta = minetest.get_meta(pos)
 		meta:set_string("owner", placer:get_player_name() or "")
-		meta:set_string("infotext", "Protection (owned by "..
-		meta:get_string("owner")..")")
+		meta:set_string("infotext", "Protection (owned by "..meta:get_string("owner")..")")
 		meta:set_string("members", "")
 	end,
 
 	on_use = function(itemstack, user, pointed_thing)
-		if pointed_thing.type ~= "node" then
-			return
-		end
-
-		protector.can_dig(5,pointed_thing.under,user:get_player_name(),false,2)
+		if pointed_thing.type ~= "node" then return end
+		protector.can_dig(protector.radius,pointed_thing.under,user:get_player_name(),false,2)
 	end,
 
 	on_rightclick = function(pos, node, clicker, itemstack)
-		local meta = minetest.env:get_meta(pos)
+		local meta = minetest.get_meta(pos)
 		if protector.can_dig(1,pos,clicker:get_player_name(),true,1) then
 			minetest.show_formspec(clicker:get_player_name(), 
-			"protector_"..minetest.pos_to_string(pos), protector.generate_formspec(meta)
-			)
+			"protector:node_"..minetest.pos_to_string(pos), protector.generate_formspec(meta))
 		end
 	end,
 
@@ -215,18 +211,7 @@ minetest.register_node("protector:protect", {
 		if not protector.can_dig(1,pos,puncher:get_player_name(),true,1) then
 			return
 		end
-
-		minetest.env:add_entity(pos, "protector:display")
-		minetest.env:get_node_timer(pos):start(10)
-	end,
-
-	on_timer = function(pos)
-		local objs = minetest.env:get_objects_inside_radius(pos,.5)
-		for _, o in pairs(objs) do
-			if (not o:is_player()) and o:get_luaentity().name == "protector:display" then
-				o:remove()
-			end
-		end
+		minetest.add_entity(pos, "protector:display")
 	end,
 })
 
@@ -263,27 +248,22 @@ minetest.register_node("protector:protect2", {
 	selection_box = {type = "wallmounted"},
 
 	after_place_node = function(pos, placer)
-		local meta = minetest.env:get_meta(pos)
+		local meta = minetest.get_meta(pos)
 		meta:set_string("owner", placer:get_player_name() or "")
-		meta:set_string("infotext", "Protection (owned by "..
-		meta:get_string("owner")..")")
+		meta:set_string("infotext", "Protection (owned by "..meta:get_string("owner")..")")
 		meta:set_string("members", "")
 	end,
 
 	on_use = function(itemstack, user, pointed_thing)
-		if pointed_thing.type ~= "node" then
-			return
-		end
-
-		protector.can_dig(5,pointed_thing.under,user:get_player_name(),false,2)
+		if pointed_thing.type ~= "node" then return end
+		protector.can_dig(protector.radius,pointed_thing.under,user:get_player_name(),false,2)
 	end,
 
 	on_rightclick = function(pos, node, clicker, itemstack)
-		local meta = minetest.env:get_meta(pos)
+		local meta = minetest.get_meta(pos)
 		if protector.can_dig(1,pos,clicker:get_player_name(),true,1) then
 			minetest.show_formspec(clicker:get_player_name(), 
-			"protector_"..minetest.pos_to_string(pos), protector.generate_formspec(meta)
-			)
+			"protector:node_"..minetest.pos_to_string(pos), protector.generate_formspec(meta))
 		end
 	end,
 
@@ -291,18 +271,7 @@ minetest.register_node("protector:protect2", {
 		if not protector.can_dig(1,pos,puncher:get_player_name(),true,1) then
 			return
 		end
-
-		minetest.env:add_entity(pos, "protector:display")
-		minetest.env:get_node_timer(pos):start(10)
-	end,
-
-	on_timer = function(pos)
-		local objs = minetest.env:get_objects_inside_radius(pos,.5)
-		for _, o in pairs(objs) do
-			if (not o:is_player()) and o:get_luaentity().name == "protector:display" then
-				o:remove()
-			end
-		end
+		minetest.add_entity(pos, "protector:display")
 	end,
 })
 
@@ -315,15 +284,14 @@ minetest.register_craft({
 	}
 })
 
--- If name entered into protector formspec
-
+-- If name entered or button press
 minetest.register_on_player_receive_fields(function(player,formname,fields)
-	if string.sub(formname,0,string.len("protector_")) == "protector_" then
-		local pos_s = string.sub(formname,string.len("protector_")+1)
-		local pos = minetest.string_to_pos(pos_s)
-		local meta = minetest.env:get_meta(pos)
 
-		if meta:get_int("page") == nil then meta:set_int("page",0) end
+	if string.sub(formname,0,string.len("protector:node_")) == "protector:node_" then
+
+		local pos_s = string.sub(formname,string.len("protector:node_")+1)
+		local pos = minetest.string_to_pos(pos_s)
+		local meta = minetest.get_meta(pos)
 
 		if not protector.can_dig(1,pos,player:get_player_name(),true,1) then
 			return
@@ -340,12 +308,13 @@ minetest.register_on_player_receive_fields(function(player,formname,fields)
 				protector.del_member(meta, string.sub(field,string.len("protector_del_member_")+1))
 			end
 		end
-
-		if fields.close_me then
-			meta:set_int("page",meta:get_int("page"))
-			else minetest.show_formspec(player:get_player_name(), formname,	protector.generate_formspec(meta))
+		
+		if not fields.close_me then
+			minetest.show_formspec(player:get_player_name(), formname, protector.generate_formspec(meta))
 		end
+
 	end
+
 end)
 
 minetest.register_entity("protector:display", {
@@ -355,10 +324,9 @@ minetest.register_entity("protector:display", {
 	visual_size = {x=1.0/1.5,y=1.0/1.5}, -- wielditem seems to be scaled to 1.5 times original node size
 	textures = {"protector:display_node"},
 	on_step = function(self, dtime)
-		local nam = minetest.get_node(self.object:getpos()).name
-		if nam ~= "protector:protect" and nam ~= "protector:protect2" then
+		self.timer = (self.timer or 0) + dtime
+		if self.timer > 10 then
 			self.object:remove()
-			return
 		end
 	end,
 })
@@ -409,11 +377,11 @@ local function on_rightclick(pos, dir, check_name, replace, replace_dir, params)
 	pos.y = pos.y-dir
 	minetest.swap_node(pos, {name=replace, param2=p2})
 
-	local snd_1 = "door_close"
-	local snd_2 = "door_open" 
+	local snd_1 = "doors_door_close"
+	local snd_2 = "doors_door_open" 
 	if params[1] == 3 then
-		snd_1 = "door_open"
-		snd_2 = "door_close"
+		snd_1 = "doors_door_open"
+		snd_2 = "doors_door_close"
 	end
 
 	if minetest.get_meta(pos):get_int("right") ~= 0 then
@@ -429,10 +397,10 @@ local name = "protector:door_wood"
 
 doors.register_door(name, {
 	description = "Protected Wooden Door",
-	inventory_image = "door_wood.png^protector_logo.png",
+	inventory_image = "doors_wood.png^protector_logo.png",
 	groups = {snappy=1,choppy=2,oddly_breakable_by_hand=2,flammable=2,door=1},
-	tiles_bottom = {"door_wood_b.png^protector_logo.png", "door_brown.png"},
-	tiles_top = {"door_wood_a.png", "door_brown.png"},
+	tiles_bottom = {"doors_wood_b.png^protector_logo.png", "doors_brown.png"},
+	tiles_top = {"doors_wood_a.png", "doors_brown.png"},
 	sounds = default.node_sound_wood_defaults(),
 	sunlight = false,
 })
@@ -491,10 +459,10 @@ local name = "protector:door_steel"
 
 doors.register_door(name, {
 	description = "Protected Steel Door",
-	inventory_image = "door_steel.png^protector_logo.png",
+	inventory_image = "doors_steel.png^protector_logo.png",
 	groups = {snappy=1,bendy=2,cracky=1,melty=2,level=2,door=1},
-	tiles_bottom = {"door_steel_b.png^protector_logo.png", "door_grey.png"},
-	tiles_top = {"door_steel_a.png", "door_grey.png"},
+	tiles_bottom = {"doors_steel_b.png^protector_logo.png", "doors_grey.png"},
+	tiles_top = {"doors_steel_a.png", "doors_grey.png"},
 	sounds = default.node_sound_wood_defaults(),
 	sunlight = false,
 })
@@ -547,21 +515,8 @@ minetest.register_craft({
 	}
 })
 
-local function get_locked_chest_formspec(pos)
-	local spos = pos.x .. "," .. pos.y .. "," ..pos.z
-	local formspec =
-		"size[8,9]"..
-		default.gui_bg..
-		default.gui_bg_img..
-		default.gui_slots..
-		"list[nodemeta:".. spos .. ";main;0,0.3;8,4;]"..
-		"list[current_player;main;0,4.85;8,1;]"..
-		"list[current_player;main;0,6.08;8,3;8]"..
-		default.get_hotbar_bg(0,4.85)
- return formspec
-end
-
 -- Protected Chest
+
 minetest.register_node("protector:chest", {
 	description = "Protected Chest",
 	tiles = {"default_chest_top.png", "default_chest_top.png", "default_chest_side.png",
@@ -574,6 +529,7 @@ minetest.register_node("protector:chest", {
 	on_construct = function(pos)
 		local meta = minetest.get_meta(pos)
 		meta:set_string("infotext", "Protected Chest")
+		meta:set_string("name", "")
 		local inv = meta:get_inventory()
 		inv:set_size("main", 8*4)
 	end,
@@ -606,14 +562,82 @@ minetest.register_node("protector:chest", {
 	on_rightclick = function(pos, node, clicker)
 		local meta = minetest.get_meta(pos)
 		if not minetest.is_protected(pos, clicker:get_player_name()) then
+
+		local spos = pos.x .. "," .. pos.y .. "," ..pos.z
+		local formspec = "size[8,9]"..
+			default.gui_bg..default.gui_bg_img..default.gui_slots..
+			"list[nodemeta:".. spos .. ";main;0,0.3;8,4;]"..
+			"button[0,4.5;2,0.25;toup;To Chest]"..
+			"field[2.3,4.8;4,0.25;chestname;;"..meta:get_string("name").."]"..
+			"button[6,4.5;2,0.25;todn;To Inventory]"..
+			"list[current_player;main;0,5;8,1;]"..
+			"list[current_player;main;0,6.08;8,3;8]"..
+			default.get_hotbar_bg(0,5)
+
 			minetest.show_formspec(
 				clicker:get_player_name(),
-				"default:chest_locked",
-				get_locked_chest_formspec(pos)
+				"protector:chest_"..minetest.pos_to_string(pos),
+				formspec
 			)
 		end
 	end,
 })
+
+-- Protected Chest formspec buttons
+
+minetest.register_on_player_receive_fields(function(player,formname,fields)
+
+	if string.sub(formname,0,string.len("protector:chest_")) == "protector:chest_" then
+
+		local pos_s = string.sub(formname,string.len("protector:chest_")+1)
+		local pos = minetest.string_to_pos(pos_s)
+		local meta = minetest.get_meta(pos)
+
+		local chest_inv = meta:get_inventory()
+		local player_inv = player:get_inventory()
+
+		if fields.toup then
+
+			-- copy contents of players inventory to chest
+			for i,v in ipairs( player_inv:get_list( "main" ) or {}) do
+				if( chest_inv and chest_inv:room_for_item('main', v)) then
+					local leftover = chest_inv:add_item( 'main', v )
+					player_inv:remove_item( "main", v )
+					if( leftover and not( leftover:is_empty() )) then
+						player_inv:add_item( "main", v )
+					end
+				end
+			end
+	
+		elseif fields.todn then
+
+			-- copy contents of chest to players inventory
+			for i,v in ipairs( chest_inv:get_list( 'main' ) or {}) do
+				if( player_inv:room_for_item( "main", v)) then
+					local leftover = player_inv:add_item( "main", v )
+					chest_inv:remove_item( 'main', v )
+					if( leftover and not( leftover:is_empty() )) then
+						chest_inv:add_item( 'main', v )
+					end
+				end
+			end
+
+		elseif fields.chestname then
+
+			-- change chest infotext to display name
+			if fields.chestname ~= "" then
+				meta:set_string("name", fields.chestname)
+				meta:set_string("infotext", "Protected Chest ("..fields.chestname..")")
+			else
+				meta:set_string("infotext", "Protected Chest")
+			end
+
+		end
+	end
+
+end)
+
+-- Protected Chest recipe
 
 minetest.register_craft({
 	output = 'protector:chest',
@@ -787,5 +811,4 @@ minetest.register_on_player_receive_fields(function(sender, formname, fields)
 		end
 	end
 end)
-
 
